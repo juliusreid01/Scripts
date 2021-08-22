@@ -1,0 +1,300 @@
+#! /usr/bin/perl
+
+################################################################################
+#
+# Author: J Reid
+# Created: 08/22/2021
+# Description:
+#     This script is a lightweight version of CreateNew that was made at MCHP
+#     The intent of this script is to quickly generate headers and start new
+#     files
+#
+# Notes:
+#
+################################################################################
+
+use strict;
+use warnings;
+use v5.10;
+
+use Data::Dumper;
+use Getopt::Long;
+
+GetOptions("output_file=s"     => \my $output_file,  # File to output new file
+           "description=s"     => \my $description,  # Description to put in the header
+           "notes=s"           => \my $notes,        # Additional notes for the header
+           "author=s"          => \my $author,       # By default the author is username, can change
+           "filetype|type|t=s" => \my $filetype,     # The type of file to generate
+           "exec"              => \my $exec,         # Makes the file executable. Will add shebang if known
+           "overwrite"         => \my $overwrite,    # Overwrites any existing file
+           "comment_char"      => \my $comment_char, # allows specifying a comment character instead
+           "shebang_str"       => \my $shebang_str,  # allows specifying a shebang string instead
+           "open=s"            => \my $open,         # set to open the file with input editor when done
+           "test"              => \my $test,         # test file inputs
+           "help|usage"        => \my $help);        # Show this message and exit
+
+Help() if $help;
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# determine the output file
+$output_file = $ARGV[0] unless $output_file;
+$description = $ARGV[1] unless $description;
+$notes       = $ARGV[2] unless $notes;
+
+# quit if no output file
+Help() unless $output_file;
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# determine the author
+chomp($author = `whoami`) unless $author;
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# determine the date (TODO. move to common script)
+my ($day, $month, $year) = (localtime)[3..5];
+my $date = sprintf("%02d/%02d/%04d", $month + 1, $day, $year + 1900);
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# global hash to map shebangs
+my %shebang = (perl    => '#! /usr/bin/perl',
+               python  => '#! /usr/bin/python',
+               shell   => '#! /bin/sh',
+               bash    => '#! /bin/bash',
+               tcl     => '#! /usr/bin/tclsh');
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# global hash to map filetype to extensions
+my %extensions  = ('.sv'     => 'verilog',
+                   '.svh'    => 'verilog',
+                   '.v'      => 'verilog',
+                   '.vh'     => 'verilog',
+                   '.mk'     => 'make',
+                   '.pl'     => 'perl',
+                   '.pm'     => 'perl',
+                   '.py'     => 'python',
+                   '.pyh'    => 'python',
+                   '.sh'     => 'shell',
+                   '.tcl'    => 'tcl');
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# global hash to map filetypes to comment char
+my %comment_map = ('verilog' => '//',
+                   'make'    => '#',
+                   'perl'    => '#',
+                   'python'  => '#',
+                   'shell'   => '#',
+                   'bash'    => '#',
+                   'tcl'     => '#');
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# run test mode if requested
+Test() if $test;
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# check if the file exists
+if( -e $output_file and not $overwrite ) {
+    print STDERR "$output_file exists please use -overwrite to overwrite this file\n";
+    exit;
+}
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# check the file type
+$output_file =~ /\/?([^\/]+)$/;
+CheckFileType($1);
+# wrap description and notes to prevent exceeding 80 chars
+$description = WrapText($description);
+$notes       = WrapText($notes);
+# goto work
+Main();
+
+################################################################################
+# sub Main
+# this sub is where we will create the actual file (in a buffer first) 
+################################################################################
+sub Main {
+    my $content = '';
+
+    $content = "$shebang_str\n\n" if ($exec and $shebang_str);
+    $content .= $comment_char x (80 / length($comment_char));
+    
+    $content .= <<CONTENT;
+
+$comment_char 
+$comment_char Author: $author
+$comment_char Created: $date
+$comment_char Description:
+$description
+$comment_char Notes:
+$notes
+CONTENT
+    $content .= $comment_char x (80 / length($comment_char));
+
+    #say $content;
+    open FILE_H, ">$output_file" or die "Could not open $output_file for write access";
+    print FILE_H $content;
+    close FILE_H;
+
+    # open the file if requested without holding up the script
+    exec "$open $output_file" if $open;
+} # sub Main
+
+################################################################################
+# sub WrapText
+# this sub will fix the description and notes from being more than 80 characters
+################################################################################
+sub WrapText {
+    my $text = $_[0];
+    my $newtext = '';
+    # if empty we set to the comment character only
+    return $comment_char unless $text;
+
+    #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+    # This code does not work when the user inserts a \n 
+    # prepend comment_char if less than 80 with character and spaces
+    #return "$comment_char     $text\n$comment_char" 
+    #      if length("$comment_char     $text") < 80;
+    #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+
+    # we need to split the text by lines first
+    my @lines = split(/\\n/, $text);
+    # each line should be split by words
+    for my $i ( 0..$#lines ) {
+        # this line is okay
+        if( length("$comment_char     $lines[$i]") < 80 ) {
+            $newtext .= "$comment_char     $lines[$i]\n";
+            next;
+        }
+        # split the line by words
+        my @words    = split(' ', $lines[$i]);
+        my @newlines = ("$comment_char    ");
+        my $idx      = 0;
+        for my $j ( 0..$#words ) {
+            # adding the next word is okay so append it
+            if( length("$newlines[$idx] $words[$j]") < 80 ) { 
+                $newlines[$idx] = "$newlines[$idx] $words[$j]";
+            }
+            # otherwise complete this line and move to the next
+            else {
+                $idx += 1;
+                $newlines[$idx] = "$comment_char     $words[$j]";
+            }
+        }
+        # append the newlines
+        $newtext .= join("\n", @newlines);
+        $newtext .= "\n";
+
+    } # for $#lines
+    
+    return "$newtext$comment_char";
+} # sub WrapText
+
+################################################################################ 
+# sub Test
+# this sub will run CheckFileType on each input argument and output how the 
+# tool will treat the file
+################################################################################ 
+sub Test {
+    foreach my $f ( @ARGV ) {
+        # ignore the affecting arguments
+        $filetype     = '';
+        $comment_char = '';
+        $shebang_str  = '';
+        # user message
+        say "Testing user input $f";
+        # run CheckFileType
+        $f =~ /\/?([^\/]+)$/;
+        CheckFileType($1);
+        # output details
+        print <<OUTPUT;
+    Filetye           = $filetype
+    Comment Character = $comment_char
+    Shebang String    = $shebang_str
+
+OUTPUT
+    } # foreach @ARGV
+    exit;
+} # sub Test
+
+################################################################################ 
+# sub CheckFiletype
+# this sub will select the comment character and shebang based on the filetype
+# or file extension
+################################################################################ 
+sub CheckFileType {
+    my $filename = shift;
+
+    my ($ext) = $filename =~ /(\.[^\.]+$)/;
+
+    # we have a special thing for makefiles
+    if( $filename eq 'Makefile' ) {
+        say 'Makefile understood' unless $test;
+        $filetype = 'make';
+    }
+    # update filetype using the file extension
+    elsif( not $filetype and $ext and exists $extensions{$ext} ) {
+        $filetype = $extensions{$ext};
+        say "Determined $filetype for $filename" unless $test;
+    } 
+    # we don't know this input file type
+    elsif ( $filetype and not exists $comment_map{lc $filetype} ) {
+        # use default comment
+        say "Using default comment char '#' for filetype $filetype"
+            unless ($comment_char or $test);
+        # for an exec do not insert a shebang
+        say "No shebang to insert" 
+            unless ($shebang_str or not $exec or $test);
+        # set file type to unknown to prevent further error
+        $filetype = '';
+    } 
+    # acknowledge valid filetype
+    elsif ( $filetype ) {
+        say "$filetype filetype input valid" unless $test;
+    } 
+    # we can't figure this out
+    else {
+        say "Unable to determine what to do for $filename" unless $test;
+        say "Using default comment char '#'" unless $test;
+        $comment_char = '#';
+    }
+    
+    # double check
+    if( $filetype ) {
+        # set the comment character
+        $comment_char = $comment_map{$filetype} unless $comment_char;
+        # set the shebang
+        $shebang_str = $shebang{$filetype} 
+             unless ($shebang_str or not exists $shebang{$filetype});
+    } # if( $filetype )
+
+} # sub CheckFileType
+
+################################################################################
+# sub Help
+# Prints help and usage data then exits
+################################################################################
+sub Help {
+    print STDERR <<HELP;
+CreateNew [options] file [description] [notes]
+e.g. CreateNew -type perl -desc "Hello World Perl Script" hello_world.pl
+
+Options:
+   -output_file      File to output new file
+   -description      Description to put in the header
+   -notes            Additional notes for the header
+   -author           By default the author is username, can change
+   -filetype|type    The type of file to generate
+   -exec             Makes the file executable. Will add shebang if known
+   -overwrite        Overwrites any existing file
+   -comment_char     allows specifying a custom comment character
+   -shebang_str      allows specifying a custom shebang string
+   -open             use this option to open the file with input editor e.g. -open gvim
+   -test             ignores all options and treats all inputs as files to test 
+                     what the tool would do
+   -help|usage       Show this message and exit
+
+Note: The file, description, and notes input arguments are ignored
+  if their respective options are input as well
+
+TODO. Show which file types and shebang are supported with date
+HELP
+exit;
+} # sub Help
