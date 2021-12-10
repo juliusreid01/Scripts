@@ -21,70 +21,48 @@ use v5.10;
 use Data::Dumper;
 use Getopt::Long;
 
-GetOptions("output_file=s"     => \my $output_file,  # File to output new file
-           "description=s"     => \my $description,  # Description to put in the header
-           "notes=s"           => \my $notes,        # Additional notes for the header
-           "author=s"          => \my $author,       # By default the author is username, can change
-           "filetype|type|t=s" => \my $filetype,     # The type of file to generate
-           "exec"              => \my $exec,         # Makes the file executable. Will add shebang if known
-           "overwrite"         => \my $overwrite,    # Overwrites any existing file
-           "comment_char"      => \my $comment_char, # allows specifying a comment character instead
-           "shebang_str"       => \my $shebang_str,  # allows specifying a shebang string instead
-           "open=s"            => \my $open,         # set to open the file with input editor when done
-           "test"              => \my $test,         # test file inputs
-           "help|usage"        => \my $help);        # Show this message and exit
+use lib '/home/scripts';
+require 'common.pm';
+
+GetOptions("output_file|file=s" => \my $output_file,  # File to output new file
+           "description=s"      => \my $description,  # Description to put in the header
+           "notes=s"            => \my $notes,        # Additional notes for the header
+           "author=s"           => \my $author,       # By default the author is username, can change
+           "filetype|type|t=s"  => \my $filetype,     # The type of file to generate
+           "exec"               => \my $exec,         # Makes the file executable. Will add shebang if known
+           "overwrite"          => \my $overwrite,    # Overwrites any existing file
+           "comment_char=s"     => \my $comment_char, # allows specifying a comment character instead
+           "shebang_str=s"      => \my $shebang_str,  # allows specifying a shebang string instead
+           "open=s"             => \my $open,         # set to open the file with input editor when done
+           "config=s"           => \my $config,       # use to override the default configuration file
+           "genconfig"          => \my $genconfig,    # use to generate the configuration file
+           "test"               => \my $test,         # test file inputs
+           "help|usage"         => \my $help);        # Show this message and exit
 
 Help() if $help;
 
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
-# determine the output file
+# default values etc
 $output_file = $ARGV[0] unless $output_file;
 $description = $ARGV[1] unless $description;
 $notes       = $ARGV[2] unless $notes;
+$config      = __FILE__.'.cfg' unless $config;
+# read the data if needed
+my @cfgData = <DATA> unless -f $config;
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# generate the configuration file and exit
+if( $genconfig ) {
+   genConfig();
+   exit unless $output_file;
+}
 
 # quit if no output file
 Help() unless $output_file;
 
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
 # determine the author
-chomp($author = `whoami`) unless $author;
-
-#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
-# determine the date (TODO. move to common script)
-my ($day, $month, $year) = (localtime)[3..5];
-my $date = sprintf("%02d/%02d/%04d", $month + 1, $day, $year + 1900);
-
-#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
-# global hash to map shebangs
-my %shebang = (perl    => '#! /usr/bin/perl',
-               python  => '#! /usr/bin/python',
-               shell   => '#! /bin/sh',
-               bash    => '#! /bin/bash',
-               tcl     => '#! /usr/bin/tclsh');
-
-#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
-# global hash to map filetype to extensions
-my %extensions  = ('.sv'     => 'verilog',
-                   '.svh'    => 'verilog',
-                   '.v'      => 'verilog',
-                   '.vh'     => 'verilog',
-                   '.mk'     => 'make',
-                   '.pl'     => 'perl',
-                   '.pm'     => 'perl',
-                   '.py'     => 'python',
-                   '.pyh'    => 'python',
-                   '.sh'     => 'shell',
-                   '.tcl'    => 'tcl');
-
-#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
-# global hash to map filetypes to comment char
-my %comment_map = ('verilog' => '//',
-                   'make'    => '#',
-                   'perl'    => '#',
-                   'python'  => '#',
-                   'shell'   => '#',
-                   'bash'    => '#',
-                   'tcl'     => '#');
+$author = getAuthor() unless $author;
 
 #+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
 # run test mode if requested
@@ -113,30 +91,211 @@ Main();
 ################################################################################
 sub Main {
     my $content = '';
+    my $date = getDate();
 
     $content = "$shebang_str\n\n" if ($exec and $shebang_str);
     $content .= $comment_char x (80 / length($comment_char));
-    
+
     $content .= <<CONTENT;
 
 $comment_char 
 $comment_char Author: $author
 $comment_char Created: $date
+$comment_char 
 $comment_char Description:
 $description
 $comment_char Notes:
 $notes
 CONTENT
+
     $content .= $comment_char x (80 / length($comment_char));
 
-    #say $content;
-    open FILE_H, ">$output_file" or die "Could not open $output_file for write access";
-    print FILE_H $content;
-    close FILE_H;
-
-    # open the file if requested without holding up the script
-    exec "$open $output_file" if $open;
+    if( $test ) {
+       say $content;
+    } else {
+       # write to the file
+       open FILE_H, ">$output_file" or die "Could not open $output_file for write access";
+       print FILE_H $content;
+       close FILE_H;
+       # add executable
+       `chmod +x $output_file` if ($exec and $shebang_str);
+       # open the file if requested without holding up the script
+       exec "$open $output_file" if $open;
+    }
 } # sub Main
+
+################################################################################ 
+# sub Test
+# this sub will run CheckFileType on each input argument and output how the 
+# tool will treat the file
+################################################################################ 
+sub Test {
+    foreach my $f ( @ARGV ) {
+        # user message
+        say "Testing user input $f";
+        # run CheckFileType
+        $output_file  = $f;
+        $f =~ /\/?([^\/]+)$/;
+        CheckFileType($1);
+        # wrap description and notes to prevent exceeding 80 chars
+        $description = WrapText($description);
+        $notes       = WrapText($notes);
+        # output details
+no warnings "uninitialized";    
+        print <<OUTPUT;
+    File              = $output_file
+    Filetype          = $filetype
+    Comment Character = $comment_char
+    Shebang String    = $shebang_str
+OUTPUT
+    print "    File Header       =" if $#ARGV == 0;
+use warnings "all";
+        Main() if $#ARGV == 0;
+        # erase previous data
+        $filetype     = '';
+        $comment_char = '';
+        $shebang_str  = '';
+    } # foreach @ARGV
+    exit;
+} # sub Test
+
+################################################################################ 
+# sub CheckFiletype
+# this sub will select the comment character and shebang based on the filetype
+# or file extension
+################################################################################ 
+sub CheckFileType {
+    # only do work if we need to
+    return if( $filetype and $comment_char and 
+               ($shebang_str or not $exec) );
+
+    # get extension from the filename
+    my $filename = $_[0];
+    # we have a special thing for makefiles
+    if( $filename eq 'Makefile' ) {
+        say 'Makefile understood' unless $test;
+        $filetype = 'make';
+        $comment_char = '#';
+        $shebang_str  = '';
+        return;
+    }
+
+    # line data of file type
+    my $data;
+    # anonymous sub to handle getting data
+    my $getdata = sub { my $arg = $_[0];
+                        # check for a configuration file
+                        if( -f $config ) {
+                           chomp($data = `grep "\\b$arg\\b" $config`);
+                        } else {
+                           ($data) = grep(/\b$arg\b/,@cfgData);
+                           chomp($data) if $data;
+                        }
+                      };
+
+    # do we have filetype
+    if ($filetype) {
+        $data = $getdata->(lc $filetype); 
+    } 
+    # the filetype wasn't found let's try the extension
+    unless ( $data ) {
+        # we can use the file extension to get data
+        $filename =~ /\.([^\.]+$)/;
+        $getdata->(lc $1);
+    } 
+    # by now we must have data
+    if ( $data ) {
+        my $sep;
+        # get the data seperator
+        if( -f $config ) {
+           chomp($sep = `grep -v '#' $config | sed -n 1p`);
+        } else {
+           chomp($sep = $cfgData[0]);
+        }
+        # parse data into an array
+        my @array = split($sep, $data);
+        # complete whatever is not available
+        $filetype = $array[0] unless $filetype;
+        $shebang_str = $array[1] unless $shebang_str;
+        $comment_char = $array[2] unless $comment_char;
+    } 
+    # if we still don't use default comment and no shebang
+    else {
+        # use default comment
+        unless ( $comment_char ) {
+            say "Using default comment char '#' for filetype $filetype" unless $test;
+            $comment_char = '#';
+        }
+        # for an exec do not insert a shebang
+        unless ( $shebang_str ) {
+            say "No shebang to insert" if $exec;
+            $shebang_str = '';
+        }
+        # set file type to unknown to prevent further error
+        $filetype = '';
+    }
+    
+} # sub CheckFileType
+
+################################################################################
+# sub genConfig
+# this sub can be called to generate the configuration file in the event it is
+# deleted or not found
+################################################################################
+sub genConfig {
+    # use the scripts path to generate the config file
+    my $path = __FILE__.'.cfg';
+    # open the file for writing
+    open FILE_H, ">$path";
+
+    print FILE_H <<CONTENT;
+################################################################################
+# Configuration File for the CreateNew script
+# This file will list shebangs, file extensions, and header types
+# The data format should be 
+#  type:path:comment:extensions(csv)
+# The first non-comment line here is the seperator
+################################################################################
+
+CONTENT
+
+    print FILE_H <DATA>;
+    close FILE_H;
+} # sub genConfig
+
+################################################################################
+# sub Help
+# Prints help and usage data then exits
+################################################################################
+sub Help {
+    print STDERR <<HELP;
+CreateNew [options] file [description] [notes]
+e.g. CreateNew -type perl -desc "Hello World Perl Script" hello_world.pl
+
+Options:
+   -output_file|file=  File to output new file
+   -description=       Description to put in the header
+   -notes=             Additional notes for the header
+   -author=            By default the author is username, can change
+   -filetype|type|t=   The type of file to generate
+   -exec               Makes the file executable. Will add shebang if known
+   -overwrite          Overwrites any existing file
+   -comment_char=      allows specifying a custom comment character
+   -shebang_str=       allows specifying a custom shebang string
+   -open=              use this option to open the file with input editor e.g. -open gvim
+   -config=            use this option to override default (CreateNew.cfg) config file
+   -genconfig          set this option to generate a configuration file
+   -test               ignores all options and treats all inputs as files to test 
+                       what the tool would do
+   -help|usage         Show this message and exit
+
+Note: The file, description, and notes input arguments are ignored
+  if their respective options are input as well
+
+TODO. Show which file types and shebang are supported with date
+HELP
+exit;
+} # sub Help
 
 ################################################################################
 # sub WrapText
@@ -146,7 +305,7 @@ sub WrapText {
     my $text = $_[0];
     my $newtext = '';
     # if empty we set to the comment character only
-    return $comment_char unless $text;
+    return "$comment_char " unless $text;
 
     #++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
     # This code does not work when the user inserts a \n 
@@ -188,114 +347,16 @@ sub WrapText {
     return "$newtext$comment_char";
 } # sub WrapText
 
-################################################################################ 
-# sub Test
-# this sub will run CheckFileType on each input argument and output how the 
-# tool will treat the file
-################################################################################ 
-sub Test {
-    foreach my $f ( @ARGV ) {
-        # ignore the affecting arguments
-        $filetype     = '';
-        $comment_char = '';
-        $shebang_str  = '';
-        # user message
-        say "Testing user input $f";
-        # run CheckFileType
-        $f =~ /\/?([^\/]+)$/;
-        CheckFileType($1);
-        # output details
-        print <<OUTPUT;
-    Filetye           = $filetype
-    Comment Character = $comment_char
-    Shebang String    = $shebang_str
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++ 
+# we use the data section to make up for no CreateNew.cfg
+__DATA__
+:
+perl:/usr/bin/perl:#:pl,pm
+python:/usr/bin/python:#:py,pyh
+shell:/usr/bin/sh:#:sh,tcsh
+bash:/usr/bin/bash:#:bash
+tcl:/usr/bin/tclsh:#:tcl
+verilog:://:v,vh
+systemverilog:://:sv,svh
+make::#:mk
 
-OUTPUT
-    } # foreach @ARGV
-    exit;
-} # sub Test
-
-################################################################################ 
-# sub CheckFiletype
-# this sub will select the comment character and shebang based on the filetype
-# or file extension
-################################################################################ 
-sub CheckFileType {
-    my $filename = shift;
-
-    my ($ext) = $filename =~ /(\.[^\.]+$)/;
-
-    # we have a special thing for makefiles
-    if( $filename eq 'Makefile' ) {
-        say 'Makefile understood' unless $test;
-        $filetype = 'make';
-    }
-    # update filetype using the file extension
-    elsif( not $filetype and $ext and exists $extensions{$ext} ) {
-        $filetype = $extensions{$ext};
-        say "Determined $filetype for $filename" unless $test;
-    } 
-    # we don't know this input file type
-    elsif ( $filetype and not exists $comment_map{lc $filetype} ) {
-        # use default comment
-        say "Using default comment char '#' for filetype $filetype"
-            unless ($comment_char or $test);
-        # for an exec do not insert a shebang
-        say "No shebang to insert" 
-            unless ($shebang_str or not $exec or $test);
-        # set file type to unknown to prevent further error
-        $filetype = '';
-    } 
-    # acknowledge valid filetype
-    elsif ( $filetype ) {
-        say "$filetype filetype input valid" unless $test;
-    } 
-    # we can't figure this out
-    else {
-        say "Unable to determine what to do for $filename" unless $test;
-        say "Using default comment char '#'" unless $test;
-        $comment_char = '#';
-    }
-    
-    # double check
-    if( $filetype ) {
-        # set the comment character
-        $comment_char = $comment_map{$filetype} unless $comment_char;
-        # set the shebang
-        $shebang_str = $shebang{$filetype} 
-             unless ($shebang_str or not exists $shebang{$filetype});
-    } # if( $filetype )
-
-} # sub CheckFileType
-
-################################################################################
-# sub Help
-# Prints help and usage data then exits
-################################################################################
-sub Help {
-    print STDERR <<HELP;
-CreateNew [options] file [description] [notes]
-e.g. CreateNew -type perl -desc "Hello World Perl Script" hello_world.pl
-
-Options:
-   -output_file      File to output new file
-   -description      Description to put in the header
-   -notes            Additional notes for the header
-   -author           By default the author is username, can change
-   -filetype|type    The type of file to generate
-   -exec             Makes the file executable. Will add shebang if known
-   -overwrite        Overwrites any existing file
-   -comment_char     allows specifying a custom comment character
-   -shebang_str      allows specifying a custom shebang string
-   -open             use this option to open the file with input editor e.g. -open gvim
-   -test             ignores all options and treats all inputs as files to test 
-                     what the tool would do
-   -help|usage       Show this message and exit
-
-Note: The file, description, and notes input arguments are ignored
-  if their respective options are input as well
-
-TODO. Show which file types and shebang are supported with date
-HELP
-exit;
-} # sub Help
