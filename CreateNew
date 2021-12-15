@@ -93,7 +93,7 @@ sub Main {
     my $content = '';
     my $date = getDate();
 
-    $content = "$shebang_str\n\n" if ($exec and $shebang_str);
+    $content = "#! $shebang_str\n\n" if ($exec and $shebang_str);
     $content .= $comment_char x (80 / length($comment_char));
 
     $content .= <<CONTENT;
