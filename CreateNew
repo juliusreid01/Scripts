@@ -195,7 +195,7 @@ sub CheckFileType {
 
     # do we have filetype
     if ($filetype) {
-        $data = $getdata->(lc $filetype); 
+        $getdata->(lc $filetype); 
     } 
     # the filetype wasn't found let's try the extension
     unless ( $data ) {
