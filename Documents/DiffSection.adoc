@@ -1,0 +1,32 @@
+Notes on how 3 input arguments could be handled for DiffSection
+
+We use the table below to help understand
+
+* Let A = grep -n string File[1] 
+* Let B = sed -n Line[0],Line[1]p File[0] | grep -c '.'
+
+[cols="1,2,2,2,4",options="header"]
+|===
+|Method |Line[0] |Line[1] |Line[2] |Line[3] 
+|0      |int     |int     |int     |Line[2] + Line[1] - Line[0]
+|1      |string  |string  |string  |Line[1]
+|2      |int     |int     |string  |Line[1] - Line[0] + A
+|3      |string  |int     |string  |A + B
+|4      |int     |string  |string  |A + B
+|5      |int     |string  |int     |Line[1]
+|6      |string  |int     |int     |Line[2] + B
+|7      |string  |string  |int     |Line[1]
+|===
+
+We see that 
+
+* in method 0; all three are integers simplest path is to do math
+* in method 1; all three are strings copy the 2nd to last string
+* in mehtods 3 & 4; A + B applies when Line[2] is string and Line[0] and Line[1] are different types 
+* in methods 5 & 7; copy Line[1] since Line[2] is integer type
+** we could alternatively do Line[2] + B as shown in Method 6
+* in method 2; if the Line[2] is not found -> Line[2] = A = 1
+** we could alternatively do if Line[1] > A -> Line[3] = Line[1]
+
+The idea is the quickest path in the event of accidentally typing just 3 arguments
+
