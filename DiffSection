@@ -1,0 +1,222 @@
+#! /usr/bin/perl
+
+################################################################################
+# 
+# Author: J Reid
+# Created: 12/15/2021
+# 
+# Description:
+#     Compare a section of two files or two sections of the same file
+#
+# Notes:
+#     This script is just a sed wrapper
+# 
+################################################################################
+
+use strict;
+use warnings;
+use v5.10;
+
+use Data::Dumper;
+use Getopt::Long;
+
+# default tool to diff with is tkdiff
+my $tool = 'diff';
+# default seperator for sed
+my $sep  = '/';
+# buffer to prevent running sed twice in some circumstances
+my @buffer;
+# tail/head commands
+my @cmd;
+# test mode set by making $tool TEST
+my $testmode;
+
+# default operation is sed but we could use head/tail
+
+GetOptions("file=s"      => \my @files,
+           "line=s"      => \my @lines,
+           "tool=s"      => \$tool,
+           "keep"        => \my $keep,     # set to keep the files
+           "sep=s"       => \$sep,         # use to change the sed seperator
+           "tail"        => \my $tail,
+           "head"        => \my $head,
+           "help|usage"  => \my $help);
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# turn on test mode
+$testmode = 1 if $tool eq 'TEST';
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# check for files
+unless ( @files ) {
+   # check each argument
+   foreach my $arg ( @ARGV ) {
+      # push files in the files array
+      push @files, $arg if -f $arg;
+   }
+}   
+# check for lines
+unless ( @lines ) {
+   # check each argument
+   foreach my $arg ( @ARGV ) {
+      # push lines in the lines array
+      push @lines, $arg unless -f $arg;
+   }
+} # unless @lines
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# use the same file if only one file argument is supplied
+push @files, $files[0] if $#files == 0;
+# if no files show help and quit
+Help() unless @files;
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# convert the lines to patterns if non-numeric
+foreach my $l ( @lines ) {
+   if( $l !~ /^[0-9]+$/ and $l ne '$' ) {
+       $l = "/$l/";
+   }
+}
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# fix the number of line arguments
+if( $tail or $head ) {
+    # no line arguments will use the default
+    if( scalar(@lines) < 1 ) {
+        # head/tail $files[0]
+        $cmd[$_] = "$files[$_]" for(0..1);
+    }
+    # 1 line argument will copy 
+    elsif( scalar(@lines) < 2 ) {
+       push @lines, $lines[0];
+    }
+    # complete the command
+    if( scalar(@lines) > 1 ) {
+        $cmd[$_] = "-$lines[$_] $files[$_]" for(0..1);
+    }
+}
+else {
+    # no arguments will quit
+    if( scalar(@lines) < 1 ) {
+        say "sed must have a pattern to search. Exiting";
+        exit;
+    }
+    # 1 argument duplicates across
+    elsif( scalar(@lines) < 2 ) {
+        $lines[$_] = $lines[0] for (1..3);
+    }
+    # 2 argument duplicate both
+    elsif( scalar(@lines) < 3 ) {
+        $lines[$_+2] = $lines[$_] for (0..1);
+    }
+    # 3 argument
+    elsif( scalar(@lines) < 4 ) {
+        # match with the table in this document https://github.com/juliusreid01/Scripts/blob/master/Documents/DiffSection.adoc
+        my $method = 0;
+        for(0..2) {
+           $method |= (1<<$_) if $lines[2-$_] !~ /^[0-9]+$/;
+        }
+        # probably should've used switch
+        if( $method == 0 ) {
+           $lines[3] = $lines[2] + $lines[1] - $lines[0];
+        }
+        elsif( $method =~ /[267]/ ) {
+           $lines[3] = $lines[1]
+        }
+        # methods 1, 3, 4, 5
+        else {
+           # get A
+           chomp(my $A = `grep -n $lines[2] $files[1] | grep -m 1 "^[0-9]\\+" -o`);
+           $A = 1 unless $A;
+           # get B
+           @buffer = `sed -n '$lines[0],$lines[1]p' $files[0]`;
+           my $B = $#buffer;
+           $B = 0 unless $B;
+           # select one of 3 formulas
+           if( $method == 1 ) { $lines[3] = $lines[1] - $lines[0] + $A; }
+           elsif( $method == 4 ) { $lines[3] = $lines[2] + $B; }
+           else                  { $lines[3] = $A + $B; }
+        }
+    }
+}
+
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# create two temporary files
+my @tmp = qw/tmp0 tmp1/;
+
+unless ( $testmode ) {
+   chomp($tmp[$_] = `mktemp`) for(0..1);
+   say "Created temp files $tmp[0] $tmp[1]";
+}
+
+# give tail priority over head
+if( $tail ) {
+   say "tail $cmd[$_] > $tmp[$_]" for(0..1);
+   unless ( $testmode ) {
+      `tail $cmd[$_] > $tmp[$_]` for(0..1); }
+}
+elsif( $head ) {
+   say "head $cmd[$_]" for(0..1);
+   unless ( $testmode ) {
+      `head $cmd[$_] > $tmp[$_]` for(0..1); }
+}
+else {
+   # run sed on the temporary files using the inputs
+   say "sed -n '$lines[0],$lines[1]p' $files[0] > $tmp[0]";
+   say "sed -n '$lines[2],$lines[3]p' $files[1] > $tmp[1]";
+   unless ( $testmode ) {
+      if( @buffer ) {
+         `echo "@buffer" > $tmp[0]`;
+      } else {
+         `sed -n '$lines[0],$lines[1]p' $files[0] > $tmp[0]`;
+      }
+      `sed -n '$lines[2],$lines[3]p' $files[1] > $tmp[1]`;
+   }
+}
+
+#+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# run the diff tool on these two files
+unless ( $testmode ) {
+   if( $keep ) {
+      system "$tool $tmp[0] $tmp[1] &";
+   } else {
+      say `$tool $tmp[0] $tmp[1]`;
+      # discard the files when done
+      `rm -f $tmp[0] $tmp[1]`;
+      say "Deleted temp files $tmp[0] $tmp[1]";
+   }
+}
+
+################################################################################
+# sub Help
+# Prints help and usage data then exits
+################################################################################
+sub Help {
+    print STDERR <<HELP;
+DiffSection 
+This is a wrapper script on sed and diff
+Used to compare sections of files based on line numbers and/or patterns
+
+USAGE
+DiffSection file line0 line1 line2 line3
+   This usage will compare two sections of a file where line can be numerical
+   or text (as input to sed) 
+   This is what the script will in turn do
+   sed -n 'line0,line1p' file > tmpa.txt
+   sed -n 'line2,line3p' file > tmpb.txt
+   diff tmpa.txt tmpb.txt
+
+OPTIONS
+   -file=s      an array option to explicitly say which file
+   -line=s      an array option to explicitly identify the lines
+   -tool=s      use this option to select the tool (default: diff)
+   -keep        setting this option will keep the temporary files generated
+   -sep=        use this option to change the sed seperator
+   -tail        set to use tail instead of sed
+   -head        set to use head instead of sed, tail has priority over head
+   -help        show this message and exit
+HELP
+exit;
+} # sub Help
+
